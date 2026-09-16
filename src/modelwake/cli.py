@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
+import socket
 import sys
+import urllib.parse
 
 from . import __version__
 from . import ledger as ledger_mod
@@ -31,7 +34,69 @@ def build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("tiers", help="show tier chains from config")
     e.add_argument("--config", required=True)
+
+    f = sub.add_parser("free", help="what free can I use right now?")
+    f.add_argument("--config", required=True,
+                   help="tip: examples/free.toml ships a $0 chain")
+    f.add_argument("--db", default="modelwake.db")
     return ap
+
+
+def _is_local(url: str) -> bool:
+    try:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1")
+
+
+def _probe_local(url: str, timeout: float = 2.0) -> bool:
+    """TCP probe for local servers (Ollama etc). No request sent, no key needed."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or "127.0.0.1"
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def cmd_free(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config(args.config)
+    except Exception as ex:
+        print(f"modelwake: {ex}", file=sys.stderr)
+        return 2
+    chain = ([cfg.tiers[t] for t in ("FREE", "SIMPLE") if t in cfg.tiers] or
+             [next(iter(cfg.tiers.values()))])[0]
+    cooled = {c["model"]: c["retry_in"] for c in ledger_mod.cooling_down(args.db)}
+    ready = 0
+    for key in chain:
+        m = cfg.models[key]
+        bits: list[str] = []
+        usable = True
+        if key in cooled:
+            bits.append(f"cooling {cooled[key]}s")
+            usable = False
+        if _is_local(m.base_url):
+            up = _probe_local(m.base_url)
+            bits.append("reachable" if up else "down (is Ollama running?)")
+            usable = usable and up
+        elif m.api_key_env:
+            if os.environ.get(m.api_key_env):
+                bits.append("key set")
+            else:
+                bits.append(f"key {m.api_key_env} missing — free key, no card")
+                usable = False
+        else:
+            bits.append("no key needed")
+        price = "FREE" if m.price_in_per_1k == 0 and m.price_out_per_1k == 0 else "$"
+        print(f"{key} [{price}]: {'; '.join(bits)}")
+        ready += usable
+    print(f"{ready}/{len(chain)} free models ready — "
+          f"first ready wins, 429s rotate automatically")
+    return 0 if ready else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,7 +134,9 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         tier = auto_tier(args.prompt) if args.tier == "auto" else args.tier.upper()
         try:
-            res = route(cfg, tier, args.prompt, openai_chat, timeout=args.timeout)
+            res = route(cfg, tier, args.prompt, openai_chat,
+                        timeout=args.timeout,
+                        db=None if args.no_ledger else args.db)
         except Exception as ex:
             if not args.no_ledger:
                 ledger_mod.log(args.db, model="(none)", tier=tier,
@@ -85,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
                            cost_usd=res.cost_usd, ok=True)
         print(f"[{res.model_key} ${res.cost_usd:.4f}] {res.text}")
         return 0
+    if args.cmd == "free":
+        return cmd_free(args)
     ap.print_help()
     return 2
 

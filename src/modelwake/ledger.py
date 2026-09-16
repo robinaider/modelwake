@@ -11,10 +11,15 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS usage(
   in_tokens INTEGER, out_tokens INTEGER, cost_usd REAL, ok INTEGER, error TEXT
 )"""
 
+COOLDOWN_SCHEMA = """CREATE TABLE IF NOT EXISTS cooldowns(
+  model TEXT PRIMARY KEY, until_ts REAL
+)"""
+
 
 def _connect(db: str | Path) -> sqlite3.Connection:
     con = sqlite3.connect(str(db))
     con.execute(SCHEMA)
+    con.execute(COOLDOWN_SCHEMA)
     return con
 
 
@@ -50,3 +55,39 @@ def summary(db: str | Path) -> list[dict]:
          "cost_usd": c or 0.0, "ok": o or 0}
         for m, n, it, ot, c, o in rows
     ]
+
+
+def set_cooldown(db: str | Path, model: str, seconds: float) -> None:
+    """Park a rate-limited model until now+seconds. Negative seconds clears it."""
+    con = _connect(db)
+    try:
+        con.execute("DELETE FROM cooldowns WHERE until_ts <= ?", (time.time(),))
+        if seconds > 0:
+            con.execute(
+                "INSERT OR REPLACE INTO cooldowns VALUES(?,?)",
+                (model, time.time() + seconds),
+            )
+        else:
+            con.execute("DELETE FROM cooldowns WHERE model = ?", (model,))
+        con.commit()
+    finally:
+        con.close()
+
+
+def cooling_down(db: str | Path) -> list[dict]:
+    """Models still parked, with seconds remaining. Missing db -> []."""
+    p = Path(str(db))
+    if not p.exists():
+        return []
+    now = time.time()
+    con = sqlite3.connect(str(db))
+    try:
+        con.execute(COOLDOWN_SCHEMA)
+        rows = con.execute(
+            "SELECT model, until_ts FROM cooldowns WHERE until_ts > ?"
+            " ORDER BY until_ts",
+            (now,),
+        ).fetchall()
+    finally:
+        con.close()
+    return [{"model": m, "retry_in": max(0, int(u - now))} for m, u in rows]

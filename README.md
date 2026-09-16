@@ -21,3 +21,13 @@ modelwake costs
 - Stdlib only. No Postgres, no Redis, no markup.
 
 Why not just LiteLLM/OpenRouter? Use those for breadth. Use modelwake when you want zero infra, data stays local except the winning call, and juniors can't accidentally spend $400 on opus for "hi".
+
+## Free tier: $0 end to end
+
+```bash
+modelwake free --config examples/free.toml   # what free can I use right now?
+modelwake route --config examples/free.toml --tier FREE --prompt "hi"
+modelwake costs                              # total: $0.0000 — receipts included
+```
+
+`free.toml` ships a curated $0 chain — local Ollama → OpenRouter `:free` rows → Gemini free tier — with 60s cooldown rotation, so one's 429 is another's turn. No ads, no sessions, no region gates; see `docs/FREE_MODELS.md` for the honest menu (limits, data notes, and how this differs from ad-funded free).

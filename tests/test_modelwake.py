@@ -126,6 +126,108 @@ class TestLedger(unittest.TestCase):
     def test_missing_db_empty(self):
         with tempfile.TemporaryDirectory() as t:
             self.assertEqual(ledger_mod.summary(str(Path(t) / "no.db")), [])
+            self.assertEqual(ledger_mod.cooling_down(str(Path(t) / "no.db")), [])
+
+
+class TestCooldown(unittest.TestCase):
+    def test_set_and_list(self):
+        with tempfile.TemporaryDirectory() as t:
+            db = str(Path(t) / "u.db")
+            ledger_mod.set_cooldown(db, "cheap", 3600)
+            cooling = ledger_mod.cooling_down(db)
+            self.assertEqual([c["model"] for c in cooling], ["cheap"])
+            self.assertGreater(cooling[0]["retry_in"], 3500)
+
+    def test_expired_gone(self):
+        with tempfile.TemporaryDirectory() as t:
+            db = str(Path(t) / "u.db")
+            ledger_mod.set_cooldown(db, "cheap", 3600)
+            ledger_mod.set_cooldown(db, "cheap", -1)
+            self.assertEqual(ledger_mod.cooling_down(db), [])
+
+    def test_rate_limit_parks_model(self):
+        with tempfile.TemporaryDirectory() as t:
+            db = str(Path(t) / "u.db")
+            cfg = load_config(write_cfg(t))
+
+            def limited(*a):
+                raise RuntimeError("HTTP 429: too many requests")
+
+            with self.assertRaises(RuntimeError):
+                route(cfg, "SIMPLE", "hi", limited, db=db)
+            self.assertEqual(
+                {c["model"] for c in ledger_mod.cooling_down(db)},
+                {"cheap", "strong"},
+            )
+
+    def test_cooled_models_go_last(self):
+        with tempfile.TemporaryDirectory() as t:
+            db = str(Path(t) / "u.db")
+            cfg = load_config(write_cfg(t))
+            ledger_mod.set_cooldown(db, "cheap", 3600)
+            calls = []
+
+            def ok(base, key, model, prompt, timeout):
+                calls.append(model)
+                return ("hi", 1, 1)
+
+            res = route(cfg, "SIMPLE", "hi", ok, db=db)
+            self.assertEqual(res.model_key, "strong")
+            self.assertEqual(res.attempted, ["strong"])
+            self.assertEqual(calls, ["big"])
+
+    def test_all_cooling_says_retry(self):
+        with tempfile.TemporaryDirectory() as t:
+            db = str(Path(t) / "u.db")
+            cfg = load_config(write_cfg(t))
+            ledger_mod.set_cooldown(db, "cheap", 3600)
+            ledger_mod.set_cooldown(db, "strong", 3600)
+
+            def dead(*a):
+                raise RuntimeError("down")
+
+            with self.assertRaisesRegex(RuntimeError, "cooling down"):
+                route(cfg, "SIMPLE", "hi", dead, db=db)
+
+
+FREE_TOML = """
+[model.local-small]
+base_url = "http://localhost:9/v1"
+api_key_env = ""
+model = "tiny"
+price_in_per_1k = 0.0
+price_out_per_1k = 0.0
+
+[model.or-free]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "MW_TEST_FREE_KEY_MISSING"
+model = "x:free"
+price_in_per_1k = 0.0
+price_out_per_1k = 0.0
+
+[tier.FREE]
+chain = ["local-small", "or-free"]
+"""
+
+
+class TestFreeCommand(unittest.TestCase):
+    def test_reports_status_without_keys(self):
+        import io
+        from contextlib import redirect_stdout
+
+        from modelwake.cli import main
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "free.toml"
+            p.write_text(FREE_TOML, encoding="utf-8")
+            db = str(Path(t) / "u.db")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = main(["free", "--config", str(p), "--db", db])
+            out = buf.getvalue()
+            self.assertEqual(rc, 1)  # nothing usable: port 9 refused, key missing
+            self.assertIn("local-small", out)
+            self.assertIn("or-free", out)
+            self.assertIn("MW_TEST_FREE_KEY_MISSING", out)
 
 
 if __name__ == "__main__":

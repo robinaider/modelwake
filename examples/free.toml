@@ -1,0 +1,45 @@
+# modelwake free chain — $0 end to end. No ads, no sessions, no region gates.
+# Order matters: local (private, infinite) -> OpenRouter free rows ->
+# Gemini free tier. One's 429 is another's turn (60s cooldown rotation).
+#
+# Setup (once):
+#   1. ollama pull llama3.2:1b          # optional but best: truly free + private
+#   2. export OPENROUTER_API_KEY=...    # free key, no card: openrouter.ai/keys
+#   3. export GEMINI_API_KEY=...        # free tier: aistudio.google.com
+#
+# Then:  modelwake free --config examples/free.toml
+#        modelwake route --config examples/free.toml --tier FREE --prompt "hi"
+
+[model.local-small]
+base_url = "http://localhost:11434/v1"
+api_key_env = ""
+model = "llama3.2:1b"
+price_in_per_1k = 0.0
+price_out_per_1k = 0.0
+
+# Pick current :free rows from openrouter.ai/models (they rotate).
+[model.or-free]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "meta-llama/llama-3.3-70b-instruct:free"
+price_in_per_1k = 0.0
+price_out_per_1k = 0.0
+
+[model.gemini-free]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-2.0-flash"
+price_in_per_1k = 0.0
+price_out_per_1k = 0.0
+
+[tier.FREE]
+chain = ["local-small", "or-free", "gemini-free"]
+
+[tier.SIMPLE]
+chain = ["local-small", "or-free", "gemini-free"]
+
+[tier.MEDIUM]
+chain = ["or-free", "gemini-free", "local-small"]
+
+[tier.COMPLEX]
+chain = ["gemini-free", "or-free", "local-small"]
