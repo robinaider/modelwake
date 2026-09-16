@@ -1,0 +1,23 @@
+# modelwake example — point at any OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter).
+[model.local-small]
+base_url = "http://localhost:11434/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "llama3.2:1b"
+price_in_per_1k = 0.0
+price_out_per_1k = 0.0
+
+[model.hosted-smart]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "anthropic/claude-haiku-4-5"
+price_in_per_1k = 0.25
+price_out_per_1k = 1.25
+
+[tier.SIMPLE]
+chain = ["local-small", "hosted-smart"]
+
+[tier.MEDIUM]
+chain = ["local-small", "hosted-smart"]
+
+[tier.COMPLEX]
+chain = ["hosted-smart", "local-small"]
