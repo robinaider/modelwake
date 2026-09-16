@@ -4,6 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+import sys
+
+sys.path.insert(0, str(SRC))
+
 from modelwake import ledger as ledger_mod
 from modelwake.config import load as load_config
 from modelwake.router import auto_tier, cost_usd, pick_chain, route
