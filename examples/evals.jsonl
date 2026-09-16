@@ -1,0 +1,3 @@
+{"name": "capital-fact", "prompt": "What is the capital of France? Reply with just the city name.", "tier": "FREE", "contains": "Paris"}
+{"name": "json-shape", "prompt": "Reply with exactly this JSON and nothing else: {\"ok\": true}", "tier": "FREE", "regex": "\\{\\s*\"ok\"\\s*:\\s*true\\s*\\}"}
+{"name": "follows-instruction", "prompt": "Say the word BLUEBIRD and nothing else.", "tier": "SIMPLE", "contains": "BLUEBIRD"}

@@ -230,5 +230,70 @@ class TestFreeCommand(unittest.TestCase):
             self.assertIn("MW_TEST_FREE_KEY_MISSING", out)
 
 
+class TestEval(unittest.TestCase):
+    def test_grade_contains(self):
+        from modelwake.eval import Case, grade
+        ok, _ = grade(Case("a", "p", contains="Paris"), "it is paris.")
+        self.assertTrue(ok)
+        ok, d = grade(Case("a", "p", contains="Paris"), "it is Rome.")
+        self.assertFalse(ok)
+        self.assertIn("Paris", d)
+
+    def test_grade_regex(self):
+        from modelwake.eval import Case, grade
+        ok, _ = grade(Case("a", "p", regex=r"^\{\s*\"ok\""), '{"ok": true}')
+        self.assertTrue(ok)
+        ok, _ = grade(Case("a", "p", regex=r"^\d+$"), "abc")
+        self.assertFalse(ok)
+
+    def test_load_suite_rejects(self):
+        from modelwake.eval import load_suite
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "s.jsonl"
+            p.write_text('{"name": "x", "prompt": ""}\n')
+            with self.assertRaises(ValueError):
+                load_suite(str(p))
+            p.write_text('{"name": "x", "prompt": "hi"}\n')
+            with self.assertRaises(ValueError):
+                load_suite(str(p))
+            p.write_text('{"name": "x", "prompt": "hi", "contains": "y", "regex": "["}\n')
+            with self.assertRaises(ValueError):
+                load_suite(str(p))
+            p.write_text('not json\n')
+            with self.assertRaises(ValueError):
+                load_suite(str(p))
+
+    def test_cli_eval_with_stubbed_route(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        import modelwake.cli as cli_mod
+        from modelwake.router import RouteResult
+        with tempfile.TemporaryDirectory() as t:
+            cfg = write_cfg(t)
+            suite = Path(t) / "s.jsonl"
+            suite.write_text(
+                '{"name": "says-hi", "prompt": "hi", "tier": "SIMPLE",'
+                ' "contains": "hello"}\n'
+                '{"name": "never", "prompt": "hi", "tier": "SIMPLE",'
+                ' "contains": "zzz-nope"}\n')
+            db = str(Path(t) / "u.db")
+            fake = RouteResult("cheap", "well hello there", 10, 5, 0.002,
+                               ["cheap"])
+            with mock.patch.object(cli_mod, "route", return_value=fake):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = cli_mod.main(["eval", "--config", cfg,
+                                       "--suite", str(suite), "--db", db])
+            out = buf.getvalue()
+            self.assertEqual(rc, 1)  # 1/2 passed
+            self.assertIn("PASS says-hi", out)
+            self.assertIn("FAIL never", out)
+            self.assertIn("eval: 1/2 passed", out)
+            rows = {r["model"]: r for r in ledger_mod.summary(db)}
+            self.assertEqual(rows["cheap"]["calls"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

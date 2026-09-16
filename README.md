@@ -31,3 +31,13 @@ modelwake costs                              # total: $0.0000 — receipts inclu
 ```
 
 `free.toml` ships a curated $0 chain — local Ollama → OpenRouter `:free` rows → Gemini free tier — with 60s cooldown rotation, so one's 429 is another's turn. No ads, no sessions, no region gates; see `docs/FREE_MODELS.md` for the honest menu (limits, data notes, and how this differs from ad-funded free).
+
+## Evals: prove the cheap model is good enough
+
+```bash
+modelwake eval --config examples/free.toml --suite examples/evals.jsonl
+# PASS capital-fact [local-small $0.0000] found 'Paris'
+# eval: 3/3 passed, $0.0000
+```
+
+Suites are JSONL (`prompt` + `contains`/`regex` per line) — no judge model, no vibes. Only promote a model into your chains after it passes *your* checks; re-run on a schedule and you'll notice the day a free row gets worse.

@@ -11,6 +11,7 @@ import urllib.parse
 from . import __version__
 from . import ledger as ledger_mod
 from .config import load as load_config
+from .eval import Report, Verdict, grade, load_suite
 from .router import auto_tier, route
 from .transport import openai_chat
 
@@ -39,6 +40,13 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--config", required=True,
                    help="tip: examples/free.toml ships a $0 chain")
     f.add_argument("--db", default="modelwake.db")
+
+    v = sub.add_parser("eval", help="grade a tier against your own suite")
+    v.add_argument("--config", required=True)
+    v.add_argument("--suite", required=True, help="JSONL cases (see eval.py)")
+    v.add_argument("--timeout", type=int, default=120)
+    v.add_argument("--db", default="modelwake.db")
+    v.add_argument("--no-ledger", action="store_true")
     return ap
 
 
@@ -60,6 +68,39 @@ def _probe_local(url: str, timeout: float = 2.0) -> bool:
             return True
     except Exception:
         return False
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config(args.config)
+        cases = load_suite(args.suite)
+    except Exception as ex:
+        print(f"modelwake: {ex}", file=sys.stderr)
+        return 2
+    report = Report()
+    for case in cases:
+        tier = auto_tier(case.prompt) if case.tier == "auto" else case.tier.upper()
+        try:
+            res = route(cfg, tier, case.prompt, openai_chat,
+                        timeout=args.timeout,
+                        db=None if args.no_ledger else args.db)
+        except Exception as ex:
+            report.verdicts.append(Verdict(case.name, False, f"route failed: {ex}",
+                                           tier=tier))
+            print(f"FAIL {case.name} [{tier}] route failed: {ex}")
+            continue
+        passed, detail = grade(case, res.text)
+        report.verdicts.append(Verdict(case.name, passed, detail,
+                                       res.model_key, res.cost_usd, tier))
+        if not args.no_ledger:
+            ledger_mod.log(args.db, model=res.model_key, tier=f"EVAL:{tier}",
+                           prompt_chars=len(case.prompt),
+                           in_tokens=res.in_tokens, out_tokens=res.out_tokens,
+                           cost_usd=res.cost_usd, ok=passed, error="" if passed else detail[:200])
+        mark = "PASS" if passed else "FAIL"
+        print(f"{mark} {case.name} [{res.model_key} ${res.cost_usd:.4f}] {detail}")
+    print(f"eval: {report.passed}/{report.total} passed, ${report.cost:.4f}")
+    return 0 if report.passed == report.total else 1
 
 
 def cmd_free(args: argparse.Namespace) -> int:
@@ -154,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "free":
         return cmd_free(args)
+    if args.cmd == "eval":
+        return cmd_eval(args)
     ap.print_help()
     return 2
 
